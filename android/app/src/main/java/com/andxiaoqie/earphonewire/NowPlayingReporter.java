@@ -7,102 +7,128 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Keeps one in-memory pending snapshot. New observations replace it; retries
- * retain its event ID so server-side idempotency remains effective.
- */
+/** Single-pending-snapshot reporter with deterministic, injectable state transitions. */
 public final class NowPlayingReporter {
     private static final long DEBOUNCE_MILLIS = 750L;
-    private final PairingStore pairingStore;
-    private final NowPlayingUploader uploader;
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-    private final Object lock = new Object();
+
+    interface PairingAccess {
+        PairingStore.Pairing loadForUpload();
+        void requireRePairing();
+        void recordUploadResult(String status);
+    }
+
+    interface Sender { UploadOutcome upload(PairingStore.Pairing pairing, NowPlayingPayload payload); }
+    interface ScheduledTask { void cancel(); }
+    interface Scheduler { ScheduledTask schedule(Runnable task, long delayMillis); void shutdown(); }
+
+    private final PairingAccess pairing;
+    private final Sender sender;
+    private final Scheduler scheduler;
     private NowPlayingPayload pending;
     private int retryAttempt;
-    private ScheduledFuture<?> scheduledSend;
+    private ScheduledTask scheduled;
 
     public NowPlayingReporter(Context context) {
-        this(new PairingStore(context), new NowPlayingUploader());
+        this(new PairingStore(context), new NowPlayingUploader(), new ExecutorScheduler());
     }
 
-    NowPlayingReporter(PairingStore store, NowPlayingUploader uploader) {
-        this.pairingStore = store;
-        this.uploader = uploader;
+    NowPlayingReporter(PairingAccess pairing, Sender sender, Scheduler scheduler) {
+        this.pairing = pairing;
+        this.sender = sender;
+        this.scheduler = scheduler;
     }
 
-    public void observe(String title, String artist, String playbackState) {
+    public synchronized void observe(String title, String artist, String playbackState) {
         if (title == null || title.trim().isEmpty()) return;
-        final NowPlayingPayload next;
         try {
-            next = NowPlayingPayload.create(title, artist, playbackState);
-        } catch (IllegalArgumentException error) {
-            return;
-        }
-        synchronized (lock) {
-            pending = next;
+            pending = NowPlayingPayload.create(title, artist, playbackState);
             retryAttempt = 0;
-            scheduleLocked(DEBOUNCE_MILLIS);
+            schedule(DEBOUNCE_MILLIS);
+        } catch (IllegalArgumentException ignored) {
+            // A malformed or title-less MediaSession observation is never uploaded.
         }
     }
 
-    public void shutdown() {
-        synchronized (lock) {
-            if (scheduledSend != null) scheduledSend.cancel(false);
-            scheduledSend = null;
-            pending = null;
-        }
-        executor.shutdownNow();
+    synchronized void sendNowForTest() { sendPending(); }
+
+    public synchronized void shutdown() {
+        if (scheduled != null) scheduled.cancel();
+        scheduled = null;
+        pending = null;
+        scheduler.shutdown();
     }
 
-    private void scheduleLocked(long delayMillis) {
-        if (scheduledSend != null) scheduledSend.cancel(false);
-        scheduledSend = executor.schedule(this::sendPending, delayMillis, TimeUnit.MILLISECONDS);
+    private synchronized void schedule(long delayMillis) {
+        if (scheduled != null) scheduled.cancel();
+        scheduled = scheduler.schedule(this::sendPending, delayMillis);
     }
 
     private void sendPending() {
         final NowPlayingPayload sending;
-        synchronized (lock) {
+        synchronized (this) {
             sending = pending;
-            scheduledSend = null;
+            scheduled = null;
         }
         if (sending == null) return;
-        PairingStore.Pairing pairing = pairingStore.load();
-        if (pairing == null) {
-            pairingStore.recordUploadResult("Pairing required");
+        PairingStore.Pairing activePairing = pairing.loadForUpload();
+        if (activePairing == null) {
+            pairing.recordUploadResult("Pairing required");
             return;
         }
-        UploadOutcome outcome = uploader.upload(pairing, sending);
-        synchronized (lock) {
-            if (pending != sending) return; // A newer observation already replaced this one.
+        UploadOutcome outcome = sender.upload(activePairing, sending);
+        if (outcome == UploadOutcome.REPAIR_REQUIRED) {
+            synchronized (this) {
+                pending = null;
+                retryAttempt = 0;
+                if (scheduled != null) scheduled.cancel();
+                scheduled = null;
+            }
+            pairing.requireRePairing();
+            pairing.recordUploadResult("Upload token rejected - pair again");
+            return;
+        }
+        synchronized (this) {
+            if (pending != sending) return;
             switch (outcome) {
                 case SUCCESS:
                     pending = null;
                     retryAttempt = 0;
-                    pairingStore.recordUploadResult("Uploaded");
+                    pairing.recordUploadResult("Uploaded");
                     return;
                 case REPAIR_REQUIRED:
                     pending = null;
-                    pairingStore.recordUploadResult("Upload token rejected — pair again");
+                    pairing.requireRePairing();
+                    pairing.recordUploadResult("Upload token rejected — pair again");
                     return;
                 case SUPERSEDED:
                     pending = null;
-                    pairingStore.recordUploadResult("Superseded by a newer report");
+                    pairing.recordUploadResult("Superseded by a newer report");
                     return;
                 case RETRYABLE:
-                    retryAttempt++;
-                    long delay = RetryPolicy.delayMillis(retryAttempt);
+                    long delay = RetryPolicy.delayMillis(++retryAttempt);
                     if (delay > 0) {
-                        pairingStore.recordUploadResult("Temporary network error — retrying");
-                        scheduleLocked(delay);
+                        pairing.recordUploadResult("Temporary network error — retrying");
+                        schedule(delay);
                     } else {
                         pending = null;
-                        pairingStore.recordUploadResult("Temporary upload failure");
+                        pairing.recordUploadResult("Temporary upload failure");
                     }
                     return;
                 default:
                     pending = null;
-                    pairingStore.recordUploadResult("Upload rejected");
+                    pairing.recordUploadResult("Upload rejected");
             }
         }
+    }
+
+    private static final class ExecutorScheduler implements Scheduler {
+        private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+
+        @Override public ScheduledTask schedule(Runnable task, long delayMillis) {
+            ScheduledFuture<?> future = executor.schedule(task, delayMillis, TimeUnit.MILLISECONDS);
+            return () -> future.cancel(false);
+        }
+
+        @Override public void shutdown() { executor.shutdownNow(); }
     }
 }

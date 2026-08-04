@@ -6,7 +6,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /** HTTPS-only uploader. It never follows redirects or writes request data to logs. */
-public final class NowPlayingUploader {
+public final class NowPlayingUploader implements NowPlayingReporter.Sender {
     public UploadOutcome upload(PairingStore.Pairing pairing, NowPlayingPayload payload) {
         HttpURLConnection connection = null;
         try {

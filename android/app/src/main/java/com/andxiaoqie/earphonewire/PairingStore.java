@@ -16,13 +16,14 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 /** Stores only a normalized origin and an Android Keystore-encrypted upload token. */
-public final class PairingStore {
+public final class PairingStore implements NowPlayingReporter.PairingAccess {
     private static final String PREFS = "secure_pairing";
     private static final String ORIGIN = "origin";
     private static final String TOKEN = "encrypted_token";
     private static final String KEY_ALIAS = "earphone_wire_upload_token_v1";
     private static final String LAST_UPLOAD_STATUS = "last_upload_status";
     private static final String LAST_UPLOAD_TIME = "last_upload_time";
+    private static final String REPAIR_REQUIRED = "repair_required";
     private final SharedPreferences preferences;
 
     public PairingStore(Context context) {
@@ -32,7 +33,8 @@ public final class PairingStore {
     public synchronized void save(String origin, String token) throws Exception {
         String normalized = PairingOrigin.normalize(origin);
         if (token == null || token.isEmpty()) throw new IllegalArgumentException("Upload token is required.");
-        preferences.edit().putString(ORIGIN, normalized).putString(TOKEN, encrypt(token)).apply();
+        preferences.edit().putString(ORIGIN, normalized).putString(TOKEN, encrypt(token))
+                .putBoolean(REPAIR_REQUIRED, false).apply();
     }
 
     public synchronized Pairing load() {
@@ -55,11 +57,24 @@ public final class PairingStore {
         return preferences.contains(ORIGIN) && preferences.contains(TOKEN);
     }
 
-    public synchronized void clear() {
-        preferences.edit().remove(ORIGIN).remove(TOKEN).remove(LAST_UPLOAD_STATUS).remove(LAST_UPLOAD_TIME).apply();
+    public synchronized boolean requiresRePairing() {
+        return preferences.getBoolean(REPAIR_REQUIRED, false);
     }
 
-    public void recordUploadResult(String status) {
+    @Override public synchronized Pairing loadForUpload() {
+        return requiresRePairing() ? null : load();
+    }
+
+    @Override public synchronized void requireRePairing() {
+        preferences.edit().putBoolean(REPAIR_REQUIRED, true).apply();
+    }
+
+    public synchronized void clear() {
+        preferences.edit().remove(ORIGIN).remove(TOKEN).remove(LAST_UPLOAD_STATUS)
+                .remove(LAST_UPLOAD_TIME).remove(REPAIR_REQUIRED).apply();
+    }
+
+    @Override public void recordUploadResult(String status) {
         preferences.edit().putString(LAST_UPLOAD_STATUS, status)
                 .putLong(LAST_UPLOAD_TIME, System.currentTimeMillis()).apply();
     }

@@ -98,6 +98,9 @@ public final class MainActivity extends Activity {
         try {
             String token = uploadTokenInput.getText().toString();
             if (TextUtils.isEmpty(token)) {
+                if (pairingStore.requiresRePairing()) {
+                    throw new IllegalArgumentException(getString(R.string.new_token_required));
+                }
                 PairingStore.Pairing existing = pairingStore.load();
                 if (existing == null) throw new IllegalArgumentException(getString(R.string.token_required));
                 token = existing.token;
@@ -105,7 +108,7 @@ public final class MainActivity extends Activity {
             pairingStore.save(workerOriginInput.getText().toString(), token);
             uploadTokenInput.setText(""); // Never redisplay a saved token.
             updatePairingStatus();
-            startService(new Intent(this, PlaybackNotificationListenerService.class));
+            PairingEvents.notifyChanged();
         } catch (Exception error) {
             pairingStatus.setText(error.getMessage() == null ? getString(R.string.pairing_invalid) : error.getMessage());
         }
@@ -132,10 +135,15 @@ public final class MainActivity extends Activity {
         uploadTokenInput.setText("");
         updatePairingStatus();
         updateUploadStatus();
+        PairingEvents.notifyChanged();
     }
 
     private void updatePairingStatus() {
-        pairingStatus.setText(pairingStore.isPaired() ? R.string.paired_token_hidden : R.string.not_paired);
+        if (pairingStore.requiresRePairing()) {
+            pairingStatus.setText(R.string.repair_required);
+        } else {
+            pairingStatus.setText(pairingStore.isPaired() ? R.string.paired_token_hidden : R.string.not_paired);
+        }
     }
 
     private void updateUploadStatus() {

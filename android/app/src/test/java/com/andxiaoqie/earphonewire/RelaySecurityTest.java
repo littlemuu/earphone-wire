@@ -84,17 +84,23 @@ public final class RelaySecurityTest {
 
     @Test public void sourceAndApkConfigurationDoNotContainEmbeddedCredentials() throws Exception {
         File root = new File(System.getProperty("user.dir"));
-        File source = new File(root, "src/main");
-        if (!source.isDirectory()) source = new File(root, "app/src/main");
-        final File scanRoot = source;
-        assertTrue("Could not locate Android source", scanRoot.isDirectory());
-        Files.walk(scanRoot.toPath()).filter(Files::isRegularFile).forEach(path -> {
+        File projectRoot = new File(root, "app").isDirectory() ? root : root.getParentFile();
+        assertTrue("Could not locate Android project", projectRoot != null && new File(projectRoot, "app/src/main").isDirectory());
+        Files.walk(projectRoot.toPath())
+                .filter(Files::isRegularFile)
+                .filter(path -> !path.toString().contains(File.separator + "build" + File.separator))
+                .filter(path -> !path.toString().contains(File.separator + ".gradle" + File.separator))
+                .filter(path -> {
+                    String name = path.getFileName().toString();
+                    return name.endsWith(".java") || name.endsWith(".xml")
+                            || name.endsWith(".gradle") || name.endsWith(".properties");
+                }).forEach(path -> {
             try {
                 String text = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
                 assertFalse("Embedded authorization header in " + path,
                         text.matches("(?s).*Bearer\\s+[A-Za-z0-9_-]{20,}.*"));
-                assertFalse("Credential in BuildConfig/resources in " + path,
-                        text.matches("(?s).*(ANDROID_UPLOAD_TOKEN|GITHUB_CLIENT_SECRET)\\s*[=:]\\s*[\\\"'][^\\\"']{8,}.*"));
+                assertFalse("Credential in Android source, resources, or Gradle in " + path,
+                        text.matches("(?s).*(ANDROID_UPLOAD_TOKEN|GITHUB_CLIENT_ID|GITHUB_CLIENT_SECRET|COOKIE_ENCRYPTION_KEY|ALLOWED_GITHUB_USER_ID)\\s*[=:]\\s*[\\\"'][^\\\"']{8,}.*"));
             } catch (Exception error) {
                 throw new AssertionError(error);
             }
