@@ -1,0 +1,15 @@
+node_modules/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+dist/
+*.log
+.idea/
+.vscode/
+android/local.properties
+android/.gradle/
+android/**/build/
+android/gradle-diagnostic.txt
+server/worker-configuration.d.ts

@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "earphone-wire-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-03",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NOW_PLAYING",
+        "class_name": "NowPlayingDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-now-playing-snapshot",
+      "new_sqlite_classes": ["NowPlayingDurableObject"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
