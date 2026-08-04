@@ -47,19 +47,27 @@ function mcpResource(request: Request): string {
   return `${new URL(request.url).origin}/mcp`;
 }
 
-function mcpChallenge(request: Request): string {
+function protectedResourceMetadata(request: Request): string {
   const metadata = new URL(
     "/.well-known/oauth-protected-resource/mcp",
     request.url,
   ).toString();
-  return `Bearer realm="OAuth", resource_metadata="${metadata}"`;
+  return metadata;
+}
+
+function mcpHttpChallenge(request: Request): string {
+  return `Bearer error="invalid_token", error_description="Authentication is required.", resource_metadata="${protectedResourceMetadata(request)}"`;
+}
+
+export function mcpToolScopeChallenge(request: Request): string {
+  return `Bearer error="insufficient_scope", error_description="This tool requires the playback:read scope.", scope="${PLAYBACK_SCOPE}", resource_metadata="${protectedResourceMetadata(request)}"`;
 }
 
 function unauthorizedMcp(request: Request): Response {
   return noStore(
     new Response("Unauthorized", {
       status: 401,
-      headers: { "WWW-Authenticate": mcpChallenge(request) },
+      headers: { "WWW-Authenticate": mcpHttpChallenge(request) },
     }),
   );
 }
@@ -185,7 +193,7 @@ function createServer(env: WorkerEnv, request: Request): McpServer {
     },
   );
   const expectedResource = mcpResource(request);
-  const challenge = mcpChallenge(request);
+  const challenge = mcpToolScopeChallenge(request);
 
   server.registerTool(
     "get_now_playing",
@@ -214,7 +222,7 @@ function createServer(env: WorkerEnv, request: Request): McpServer {
         return {
           isError: true,
           content: [{ type: "text" as const, text: "Access denied." }],
-          _meta: { "mcp/www_authenticate": challenge },
+          _meta: { "mcp/www_authenticate": [challenge] },
         };
       }
 

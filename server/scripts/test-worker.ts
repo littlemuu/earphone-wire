@@ -7,6 +7,7 @@ import {
 import worker, {
   hasPlaybackReadAccess,
   mcpApiHandler,
+  mcpToolScopeChallenge,
   NowPlayingDurableObject,
 } from "../src/index";
 import type { WorkerEnv } from "../src/env";
@@ -263,6 +264,14 @@ check(
   anonymousMcp.status === 401 && anonymousMcp.headers.get("www-authenticate")?.includes("resource_metadata"),
   "anonymous MCP request receives OAuth challenge",
 );
+const toolScopeChallenge = mcpToolScopeChallenge(new Request("http://localhost/mcp"));
+check(
+  toolScopeChallenge.includes("resource_metadata=") &&
+    toolScopeChallenge.includes('scope="playback:read"') &&
+    toolScopeChallenge.includes('error="insufficient_scope"') &&
+    toolScopeChallenge.includes('error_description="'),
+  "tool OAuth challenge advertises the required scope without sensitive details",
+);
 
 check(
   !(await hasPlaybackReadAccess(
@@ -297,7 +306,13 @@ const forbiddenMcp = await mcpApiHandler.fetch(
   env,
   context({ githubUserId: allowedGithubUserId }),
 );
-check(forbiddenMcp.status === 401 && forbiddenMcp.headers.get("www-authenticate")?.includes("resource_metadata"), "MCP handler fails closed without token scope");
+check(
+  forbiddenMcp.status === 401 &&
+    forbiddenMcp.headers.get("www-authenticate")?.includes("resource_metadata") &&
+    forbiddenMcp.headers.get("www-authenticate")?.includes('error="invalid_token"') &&
+    forbiddenMcp.headers.get("www-authenticate")?.includes('error_description="Authentication is required."'),
+  "MCP HTTP failures use a generic invalid-token challenge",
+);
 
 const authorizedProps = { githubUserId: allowedGithubUserId };
 const localFetch: FetchLike = async (input, init) => {

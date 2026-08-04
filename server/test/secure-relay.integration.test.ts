@@ -3,6 +3,7 @@ import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { defaultHandler, mcpApiHandler, NowPlayingDurableObject } from "../src/index";
+import { mcpToolScopeChallenge } from "../src/index";
 import type { WorkerEnv } from "../src/env";
 import type { NowPlayingSnapshot } from "../src/now-playing";
 import { handleNowPlayingUpload } from "../src/upload";
@@ -205,7 +206,19 @@ describe("secure relay in Workerd/Miniflare", () => {
       );
       expect(response.status).toBe(401);
       expect(response.headers.get("www-authenticate")).toContain(`${ORIGIN}/.well-known/oauth-protected-resource/mcp`);
+      expect(response.headers.get("www-authenticate")).toContain('error="invalid_token"');
+      expect(response.headers.get("www-authenticate")).toContain('error_description="Authentication is required."');
     }
+  });
+
+  it("formats the tool scope challenge as a one-element MCP metadata array", () => {
+    const challenge = mcpToolScopeChallenge(new Request(`${RESOURCE}`));
+    const metadata = { "mcp/www_authenticate": [challenge] };
+    expect(metadata["mcp/www_authenticate"]).toEqual([challenge]);
+    expect(challenge).toContain("resource_metadata=");
+    expect(challenge).toContain('scope="playback:read"');
+    expect(challenge).toContain('error="insufficient_scope"');
+    expect(challenge).toContain('error_description="This tool requires the playback:read scope."');
   });
 
   it("re-arms a real Durable Object alarm when an idempotent retry follows a failed alarm write", async () => {
