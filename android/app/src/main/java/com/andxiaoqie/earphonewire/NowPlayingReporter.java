@@ -13,7 +13,7 @@ public final class NowPlayingReporter {
 
     interface PairingAccess {
         PairingStore.Pairing loadForUpload();
-        void requireRePairing();
+        boolean requireRePairing(PairingStore.Pairing expected);
         void recordUploadResult(String status);
     }
 
@@ -49,8 +49,6 @@ public final class NowPlayingReporter {
         }
     }
 
-    synchronized void sendNowForTest() { sendPending(); }
-
     public synchronized void shutdown() {
         if (scheduled != null) scheduled.cancel();
         scheduled = null;
@@ -72,52 +70,50 @@ public final class NowPlayingReporter {
         if (sending == null) return;
         PairingStore.Pairing activePairing = pairing.loadForUpload();
         if (activePairing == null) {
-            pairing.recordUploadResult("Pairing required");
+            pairing.recordUploadResult("需要重新配对");
             return;
         }
         UploadOutcome outcome = sender.upload(activePairing, sending);
         if (outcome == UploadOutcome.REPAIR_REQUIRED) {
             synchronized (this) {
-                pending = null;
-                retryAttempt = 0;
-                if (scheduled != null) scheduled.cancel();
-                scheduled = null;
+                if (pending == sending) {
+                    pending = null;
+                    retryAttempt = 0;
+                    if (scheduled != null) scheduled.cancel();
+                    scheduled = null;
+                }
             }
-            pairing.requireRePairing();
-            pairing.recordUploadResult("Upload token rejected - pair again");
+            if (pairing.requireRePairing(activePairing)) {
+                pairing.recordUploadResult("上传令牌被拒绝，请重新配对");
+            }
             return;
         }
         synchronized (this) {
             if (pending != sending) return;
-            switch (outcome) {
-                case SUCCESS:
-                    pending = null;
-                    retryAttempt = 0;
-                    pairing.recordUploadResult("Uploaded");
-                    return;
-                case REPAIR_REQUIRED:
-                    pending = null;
-                    pairing.requireRePairing();
-                    pairing.recordUploadResult("Upload token rejected — pair again");
-                    return;
-                case SUPERSEDED:
-                    pending = null;
-                    pairing.recordUploadResult("Superseded by a newer report");
-                    return;
-                case RETRYABLE:
-                    long delay = RetryPolicy.delayMillis(++retryAttempt);
-                    if (delay > 0) {
-                        pairing.recordUploadResult("Temporary network error — retrying");
-                        schedule(delay);
-                    } else {
-                        pending = null;
-                        pairing.recordUploadResult("Temporary upload failure");
-                    }
-                    return;
-                default:
-                    pending = null;
-                    pairing.recordUploadResult("Upload rejected");
+            if (outcome == UploadOutcome.SUCCESS) {
+                pending = null;
+                retryAttempt = 0;
+                pairing.recordUploadResult("上传成功");
+                return;
             }
+            if (outcome == UploadOutcome.SUPERSEDED) {
+                pending = null;
+                pairing.recordUploadResult("已被较新的状态替代");
+                return;
+            }
+            if (outcome == UploadOutcome.RETRYABLE) {
+                long delay = RetryPolicy.delayMillis(++retryAttempt);
+                if (delay > 0) {
+                    pairing.recordUploadResult("网络暂时异常，正在重试");
+                    schedule(delay);
+                } else {
+                    pending = null;
+                    pairing.recordUploadResult("上传暂时失败");
+                }
+                return;
+            }
+            pending = null;
+            pairing.recordUploadResult("上传被拒绝");
         }
     }
 

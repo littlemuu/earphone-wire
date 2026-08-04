@@ -24,6 +24,7 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
     private static final String LAST_UPLOAD_STATUS = "last_upload_status";
     private static final String LAST_UPLOAD_TIME = "last_upload_time";
     private static final String REPAIR_REQUIRED = "repair_required";
+    private static final String PAIRING_VERSION = "pairing_version";
     private final SharedPreferences preferences;
 
     public PairingStore(Context context) {
@@ -32,9 +33,10 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
 
     public synchronized void save(String origin, String token) throws Exception {
         String normalized = PairingOrigin.normalize(origin);
-        if (token == null || token.isEmpty()) throw new IllegalArgumentException("Upload token is required.");
+        if (token == null || token.isEmpty()) throw new IllegalArgumentException("必须输入上传令牌。");
+        long version = nextVersion();
         preferences.edit().putString(ORIGIN, normalized).putString(TOKEN, encrypt(token))
-                .putBoolean(REPAIR_REQUIRED, false).apply();
+                .putBoolean(REPAIR_REQUIRED, false).putLong(PAIRING_VERSION, version).apply();
     }
 
     public synchronized Pairing load() {
@@ -42,7 +44,7 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
         String packed = preferences.getString(TOKEN, null);
         if (origin == null || packed == null) return null;
         try {
-            return new Pairing(origin, decrypt(packed));
+            return new Pairing(origin, decrypt(packed), preferences.getLong(PAIRING_VERSION, 0L));
         } catch (Exception error) {
             clear();
             return null;
@@ -65,13 +67,17 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
         return requiresRePairing() ? null : load();
     }
 
-    @Override public synchronized void requireRePairing() {
+    @Override public synchronized boolean requireRePairing(Pairing expected) {
+        if (expected == null || expected.version != preferences.getLong(PAIRING_VERSION, 0L)) {
+            return false;
+        }
         preferences.edit().putBoolean(REPAIR_REQUIRED, true).apply();
+        return true;
     }
 
     public synchronized void clear() {
         preferences.edit().remove(ORIGIN).remove(TOKEN).remove(LAST_UPLOAD_STATUS)
-                .remove(LAST_UPLOAD_TIME).remove(REPAIR_REQUIRED).apply();
+                .remove(LAST_UPLOAD_TIME).remove(REPAIR_REQUIRED).putLong(PAIRING_VERSION, nextVersion()).apply();
     }
 
     @Override public void recordUploadResult(String status) {
@@ -85,6 +91,10 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
 
     public long lastUploadTime() {
         return preferences.getLong(LAST_UPLOAD_TIME, 0L);
+    }
+
+    private long nextVersion() {
+        return preferences.getLong(PAIRING_VERSION, 0L) + 1L;
     }
 
     private String encrypt(String plaintext) throws Exception {
@@ -101,7 +111,7 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
 
     private String decrypt(String packed) throws Exception {
         byte[] combined = Base64.decode(packed, Base64.NO_WRAP);
-        if (combined.length <= 12) throw new IllegalArgumentException("Invalid stored pairing.");
+        if (combined.length <= 12) throw new IllegalArgumentException("已保存的配对信息无效。");
         byte[] iv = new byte[12];
         System.arraycopy(combined, 0, iv, 0, iv.length);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -127,10 +137,12 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
     public static final class Pairing {
         public final String origin;
         public final String token;
+        public final long version;
 
-        Pairing(String origin, String token) {
+        Pairing(String origin, String token, long version) {
             this.origin = origin;
             this.token = token;
+            this.version = version;
         }
     }
 }

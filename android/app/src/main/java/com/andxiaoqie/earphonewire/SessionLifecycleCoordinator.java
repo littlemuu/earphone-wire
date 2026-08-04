@@ -7,7 +7,6 @@ final class SessionLifecycleCoordinator<T> {
         void attach(T session);
         void detach(T session);
         void observe(T session);
-        void requestRebind();
     }
 
     private final Hooks<T> hooks;
@@ -38,10 +37,9 @@ final class SessionLifecycleCoordinator<T> {
         if (current != null) hooks.observe(current);
     }
 
-    void disconnected() {
+    void disconnect() {
         if (current != null) hooks.detach(current);
         current = null;
-        hooks.requestRebind();
     }
 
     T current() {

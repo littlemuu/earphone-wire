@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -35,17 +36,25 @@ public final class LifecycleAndReporterTest {
         assertEquals(2, hooks.observeCount);
     }
 
-    @Test public void newlyAppearingSessionIsObservedImmediatelyAndDisconnectCleansUpAndRebinds() {
+    @Test public void newlyAppearingSessionIsObservedImmediatelyAndDisconnectCleansUp() {
         RecordingHooks hooks = new RecordingHooks();
         SessionLifecycleCoordinator<String> coordinator = new SessionLifecycleCoordinator<>(hooks);
         coordinator.replace(null);
         coordinator.replace("qq-session-token");
         assertEquals(1, hooks.attachCount);
         assertEquals(1, hooks.observeCount);
-        coordinator.disconnected();
+        coordinator.disconnect();
         assertEquals(1, hooks.detachCount);
-        assertEquals(1, hooks.rebindCount);
         assertEquals(null, coordinator.current());
+    }
+
+    @Test public void requestRebindCanOpenANewConnectionBeforeOldCleanupWithoutReplacingIt() {
+        ConnectionGeneration generations = new ConnectionGeneration();
+        long oldConnection = generations.open();
+        long reconnected = generations.open();
+
+        assertFalse(generations.completeCleanup(oldConnection));
+        assertTrue(generations.isCurrent(reconnected));
     }
 
     @Test public void retryRetainsEventIdAndNewObservationGetsANewOne() {
@@ -63,7 +72,7 @@ public final class LifecycleAndReporterTest {
         assertNotEquals(sender.events.get(1), sender.events.get(2));
     }
 
-    @Test public void unauthorizedBlocksFurtherUploadsUntilPairingIsSavedAgain() {
+    @Test public void currentTokenUnauthorizedResponseLocksUploadsUntilPairingIsSavedAgain() {
         FakePairing pairing = new FakePairing();
         ManualScheduler scheduler = new ManualScheduler();
         RecordingSender sender = new RecordingSender(UploadOutcome.REPAIR_REQUIRED, UploadOutcome.SUCCESS);
@@ -75,26 +84,50 @@ public final class LifecycleAndReporterTest {
         reporter.observe("song two", "artist", "paused");
         scheduler.runNext();
         assertEquals(1, sender.events.size());
-        pairing.blocked = false;
+        pairing.saveNewToken();
         reporter.observe("song three", "artist", "playing");
         scheduler.runNext();
         assertEquals(2, sender.events.size());
     }
 
+    @Test public void lateUnauthorizedResponseForOldTokenDoesNotLockNewPairing() {
+        FakePairing pairing = new FakePairing();
+        ManualScheduler scheduler = new ManualScheduler();
+        PairingChangingSender sender = new PairingChangingSender(pairing);
+        NowPlayingReporter reporter = new NowPlayingReporter(pairing, sender, scheduler);
+
+        reporter.observe("song with token A", "artist", "playing");
+        scheduler.runNext();
+        assertFalse(pairing.blocked);
+        reporter.observe("song with token B", "artist", "playing");
+        scheduler.runNext();
+
+        assertEquals(2, sender.versions.size());
+        assertEquals(Long.valueOf(1L), sender.versions.get(0));
+        assertEquals(Long.valueOf(2L), sender.versions.get(1));
+        assertFalse(pairing.blocked);
+    }
+
     private static final class RecordingHooks implements SessionLifecycleCoordinator.Hooks<String> {
-        int attachCount; int detachCount; int observeCount; int rebindCount;
+        int attachCount; int detachCount; int observeCount;
         @Override public boolean sameSession(String left, String right) { return left.equals(right); }
         @Override public void attach(String session) { attachCount++; }
         @Override public void detach(String session) { detachCount++; }
         @Override public void observe(String session) { observeCount++; }
-        @Override public void requestRebind() { rebindCount++; }
     }
 
     private static final class FakePairing implements NowPlayingReporter.PairingAccess {
         boolean blocked;
-        final PairingStore.Pairing pairing = new PairingStore.Pairing("https://relay.test", "");
-        @Override public PairingStore.Pairing loadForUpload() { return blocked ? null : pairing; }
-        @Override public void requireRePairing() { blocked = true; }
+        long version = 1L;
+        @Override public PairingStore.Pairing loadForUpload() {
+            return blocked ? null : new PairingStore.Pairing("https://relay.test", "", version);
+        }
+        @Override public boolean requireRePairing(PairingStore.Pairing expected) {
+            if (expected.version != version) return false;
+            blocked = true;
+            return true;
+        }
+        void saveNewToken() { version++; blocked = false; }
         @Override public void recordUploadResult(String status) { }
     }
 
@@ -105,6 +138,20 @@ public final class LifecycleAndReporterTest {
         @Override public UploadOutcome upload(PairingStore.Pairing pairing, NowPlayingPayload payload) {
             events.add(payload.eventId);
             return outcomes.remove();
+        }
+    }
+
+    private static final class PairingChangingSender implements NowPlayingReporter.Sender {
+        final FakePairing pairing;
+        final List<Long> versions = new ArrayList<>();
+        PairingChangingSender(FakePairing pairing) { this.pairing = pairing; }
+        @Override public UploadOutcome upload(PairingStore.Pairing activePairing, NowPlayingPayload payload) {
+            versions.add(activePairing.version);
+            if (activePairing.version == 1L) {
+                pairing.saveNewToken();
+                return UploadOutcome.REPAIR_REQUIRED;
+            }
+            return UploadOutcome.SUCCESS;
         }
     }
 
