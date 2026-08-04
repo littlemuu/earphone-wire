@@ -6,6 +6,9 @@ const workersShim = `data:text/javascript,${encodeURIComponent(`
 export class WorkerEntrypoint {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
 }
+export class DurableObject {
+  constructor(ctx, env) { this.ctx = ctx; this.env = env; }
+}
 `)}`;
 
 globalThis.Cloudflare = {

@@ -9,7 +9,7 @@ import worker, {
   mcpApiHandler,
   NowPlayingDurableObject,
 } from "../src/index";
-import type { NowPlayingNamespace, NowPlayingStore, WorkerEnv } from "../src/env";
+import type { WorkerEnv } from "../src/env";
 import {
   SNAPSHOT_TTL_MS,
   nowPlayingSchema,
@@ -25,7 +25,7 @@ function check(condition: unknown, label: string): asserts condition {
   passed += 1;
 }
 
-class MemoryNowPlayingStore implements NowPlayingStore {
+class MemoryNowPlayingStore {
   snapshot: NowPlayingSnapshot | null = null;
   writes = 0;
 
@@ -108,13 +108,36 @@ const uploadToken = crypto.randomUUID();
 const allowedGithubUserId = String(Math.floor(Math.random() * 900_000_000) + 100_000_000);
 const store = new MemoryNowPlayingStore();
 const env: WorkerEnv = {
-  NOW_PLAYING: { getByName: () => store } satisfies NowPlayingNamespace,
+  NOW_PLAYING: { getByName: () => store } as unknown as DurableObjectNamespace<NowPlayingDurableObject>,
   OAUTH_KV: {} as KVNamespace,
   ANDROID_UPLOAD_TOKEN: uploadToken,
   ALLOWED_GITHUB_USER_ID: allowedGithubUserId,
   GITHUB_CLIENT_ID: crypto.randomUUID(),
   GITHUB_CLIENT_SECRET: crypto.randomUUID(),
   COOKIE_ENCRYPTION_KEY: crypto.randomUUID(),
+  OAUTH_PROVIDER: {
+    unwrapToken: async (token: string) => {
+      if (token === "unit-valid-token") {
+        return {
+          userId: allowedGithubUserId,
+          expiresAt: Math.floor(Date.now() / 1_000) + 60,
+          audience: "http://localhost/mcp",
+          scope: ["playback:read"],
+          grant: { clientId: "unit-client", scope: ["playback:read"], props: { githubUserId: allowedGithubUserId } },
+        };
+      }
+      if (token === "unit-no-scope-token") {
+        return {
+          userId: allowedGithubUserId,
+          expiresAt: Math.floor(Date.now() / 1_000) + 60,
+          audience: "http://localhost/mcp",
+          scope: [],
+          grant: { clientId: "unit-client", scope: ["playback:read"], props: { githubUserId: allowedGithubUserId } },
+        };
+      }
+      return null;
+    },
+  } as WorkerEnv["OAUTH_PROVIDER"],
 };
 
 function context(props: Record<string, unknown> = {}): ExecutionContext {
@@ -122,7 +145,7 @@ function context(props: Record<string, unknown> = {}): ExecutionContext {
     waitUntil() {},
     passThroughOnException() {},
     props,
-  } as ExecutionContext;
+  } as unknown as ExecutionContext;
 }
 
 function uploadRequest(
@@ -242,26 +265,46 @@ check(
 );
 
 check(
-  !(await hasPlaybackReadAccess({ githubUserId: String(Number(allowedGithubUserId) + 1), scopes: ["playback:read"] }, env)),
+  !(await hasPlaybackReadAccess(
+    { token: "unit-valid-token", clientId: "unit-client", scopes: ["playback:read"], expiresAt: Math.floor(Date.now() / 1_000) + 60, resource: new URL("http://localhost/mcp") },
+    { githubUserId: String(Number(allowedGithubUserId) + 1) },
+    env,
+    "http://localhost/mcp",
+  )),
   "non-allowed GitHub numeric ID is rejected",
 );
 check(
-  !(await hasPlaybackReadAccess({ githubUserId: allowedGithubUserId, scopes: [] }, env)),
+  !(await hasPlaybackReadAccess(
+    { token: "unit-valid-token", clientId: "unit-client", scopes: [], expiresAt: Math.floor(Date.now() / 1_000) + 60, resource: new URL("http://localhost/mcp") },
+    { githubUserId: allowedGithubUserId },
+    env,
+    "http://localhost/mcp",
+  )),
   "missing playback:read scope is rejected",
+);
+check(
+  await hasPlaybackReadAccess(
+    { token: "unit-valid-token", clientId: "unit-client", scopes: ["playback:read"], expiresAt: Math.floor(Date.now() / 1_000) + 60, resource: new URL("http://localhost/mcp") },
+    { githubUserId: allowedGithubUserId },
+    env,
+    "http://localhost/mcp",
+  ),
+  "current token-derived authorization is accepted",
 );
 
 const forbiddenMcp = await mcpApiHandler.fetch(
-  new Request("http://localhost/mcp", { method: "POST", body: "{}" }),
+  new Request("http://localhost/mcp", { method: "POST", headers: { Authorization: "Bearer unit-no-scope-token" }, body: "{}" }),
   env,
-  context({ githubUserId: allowedGithubUserId, scopes: [] }),
+  context({ githubUserId: allowedGithubUserId }),
 );
-check(forbiddenMcp.status === 403, "MCP handler fails closed without scope");
+check(forbiddenMcp.status === 401 && forbiddenMcp.headers.get("www-authenticate")?.includes("resource_metadata"), "MCP handler fails closed without token scope");
 
-const authorizedProps = { githubUserId: allowedGithubUserId, scopes: ["playback:read"] };
+const authorizedProps = { githubUserId: allowedGithubUserId };
 const localFetch: FetchLike = async (input, init) => {
   const incoming = input instanceof Request ? new Request(input, init) : new Request(input.toString(), init);
   const headers = new Headers(incoming.headers);
   headers.set("host", "localhost");
+  headers.set("authorization", "Bearer unit-valid-token");
   return mcpApiHandler.fetch(new Request(incoming, { headers }), env, context(authorizedProps));
 };
 const client = new Client({ name: "earphone-wire-test", version: "0.2.0" });

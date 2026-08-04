@@ -2,6 +2,7 @@ import {
   SNAPSHOT_TTL_MS,
   type NowPlayingSnapshot,
 } from "./now-playing";
+import { DurableObject } from "cloudflare:workers";
 import type { WorkerEnv } from "./env";
 
 type SnapshotRow = {
@@ -19,11 +20,9 @@ type SnapshotRow = {
 export type StoreSnapshotResult = "stored" | "idempotent" | "older";
 
 /** Stores the only permitted playback record: the current single-user snapshot. */
-export class NowPlayingDurableObject {
-  private readonly ctx: DurableObjectState;
-
+export class NowPlayingDurableObject extends DurableObject<WorkerEnv> {
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
-    this.ctx = ctx;
+    super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS now_playing_snapshot (
@@ -47,6 +46,9 @@ export class NowPlayingDurableObject {
     const observedAtMs = Date.parse(snapshot.observedAt);
 
     if (current?.event_id === snapshot.eventId) {
+      // A previous setAlarm may have failed after the row was committed. A
+      // client retry of the same event restores the expiry guarantee.
+      await this.ctx.storage.setAlarm(current.received_at_ms + SNAPSHOT_TTL_MS);
       return "idempotent";
     }
     if (current && observedAtMs < current.observed_at_ms) {

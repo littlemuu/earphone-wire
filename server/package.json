@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --import ./scripts/cloudflare-shim.mjs scripts/test-worker.ts",
+    "test": "node --experimental-strip-types --import ./scripts/cloudflare-shim.mjs scripts/test-worker.ts && npm run test:integration",
+    "test:integration": "vitest run --config vitest.config.ts",
     "test:mcp": "node scripts/test-mcp.mjs",
     "inspector": "npx --yes @modelcontextprotocol/inspector@2.0.0 --server-url http://localhost:8787/mcp --transport http"
   },
@@ -24,9 +25,12 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.20.1",
+    "@cloudflare/workers-types": "5.20260801.1",
     "@types/node": "26.0.1",
     "tsx": "4.23.5",
     "typescript": "6.0.3",
+    "vitest": "4.1.0",
     "wrangler": "4.118.0"
   }
 }

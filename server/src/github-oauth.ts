@@ -86,6 +86,10 @@ function isSupportedScope(scope: string[]): boolean {
   return scope.length > 0 && scope.every((entry) => entry === PLAYBACK_SCOPE);
 }
 
+function hasExactMcpResource(resource: AuthRequest["resource"], origin: string): boolean {
+  return typeof resource === "string" && resource === `${origin}/mcp`;
+}
+
 async function githubUserId(code: string, origin: string, env: WorkerEnv): Promise<string | null> {
   const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -149,7 +153,12 @@ export async function handleAuthorizationRequest(
   } catch {
     return text(400, "Invalid authorization request");
   }
-  if (!isSupportedScope(authRequest.scope) || !(await oauth.lookupClient(authRequest.clientId))) {
+  const origin = new URL(request.url).origin;
+  if (
+    !hasExactMcpResource(authRequest.resource, origin) ||
+    !isSupportedScope(authRequest.scope) ||
+    !(await oauth.lookupClient(authRequest.clientId))
+  ) {
     return text(400, "Authorization denied");
   }
 
@@ -163,12 +172,17 @@ export async function handleAuthorizationRequest(
   const github = new URL("https://github.com/login/oauth/authorize");
   github.search = new URLSearchParams({
     client_id: env.GITHUB_CLIENT_ID,
-    redirect_uri: `${new URL(request.url).origin}/callback`,
+    redirect_uri: `${origin}/callback`,
     state: githubState,
   }).toString();
-  const response = Response.redirect(github.toString(), 302);
-  response.headers.set("Set-Cookie", loginCookie(sealed, LOGIN_TTL_MS / 1_000));
-  return noStore(response);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: github.toString(),
+      "Set-Cookie": loginCookie(sealed, LOGIN_TTL_MS / 1_000),
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 export async function handleGitHubCallback(
@@ -193,7 +207,11 @@ export async function handleGitHubCallback(
   if (!userId || !/^\d+$/u.test(env.ALLOWED_GITHUB_USER_ID) || !(await constantTimeEqual(userId, env.ALLOWED_GITHUB_USER_ID))) {
     return text(403, "Access denied");
   }
-  if (!isSupportedScope(login.request.scope) || !(await oauth.lookupClient(login.request.clientId))) {
+  if (
+    !hasExactMcpResource(login.request.resource, url.origin) ||
+    !isSupportedScope(login.request.scope) ||
+    !(await oauth.lookupClient(login.request.clientId))
+  ) {
     return text(403, "Access denied");
   }
 
@@ -202,11 +220,16 @@ export async function handleGitHubCallback(
     userId,
     metadata: { githubUserId: userId },
     scope: [PLAYBACK_SCOPE],
-    props: { githubUserId: userId, scopes: [PLAYBACK_SCOPE] },
+    props: { githubUserId: userId },
   });
-  const response = Response.redirect(redirectTo, 302);
-  response.headers.set("Set-Cookie", loginCookie("", 0));
-  return noStore(response);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirectTo,
+      "Set-Cookie": loginCookie("", 0),
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 export { PLAYBACK_SCOPE };
