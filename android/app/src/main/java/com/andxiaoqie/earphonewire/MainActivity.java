@@ -17,6 +17,7 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 
 import java.text.SimpleDateFormat;
@@ -37,6 +38,11 @@ public final class MainActivity extends Activity {
     private TextView resultDetails;
     private Button openAccessButton;
     private Button refreshButton;
+    private EditText workerOriginInput;
+    private EditText uploadTokenInput;
+    private TextView pairingStatus;
+    private TextView uploadStatus;
+    private PairingStore pairingStore;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,6 +56,15 @@ public final class MainActivity extends Activity {
         resultDetails = findViewById(R.id.result_details);
         openAccessButton = findViewById(R.id.open_access_button);
         refreshButton = findViewById(R.id.refresh_button);
+        workerOriginInput = findViewById(R.id.worker_origin_input);
+        uploadTokenInput = findViewById(R.id.upload_token_input);
+        pairingStatus = findViewById(R.id.pairing_status);
+        uploadStatus = findViewById(R.id.upload_status);
+        pairingStore = new PairingStore(this);
+
+        workerOriginInput.setText(pairingStore.savedOrigin());
+        updatePairingStatus();
+        updateUploadStatus();
 
         openAccessButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -63,15 +78,76 @@ public final class MainActivity extends Activity {
                 refreshPlayback();
             }
         });
+        findViewById(R.id.save_pairing_button).setOnClickListener(view -> savePairing());
+        findViewById(R.id.test_connection_button).setOnClickListener(view -> testConnection());
+        findViewById(R.id.clear_pairing_button).setOnClickListener(view -> clearPairing());
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         updateAccessState();
+        updatePairingStatus();
+        updateUploadStatus();
         if (isNotificationListenerEnabled()) {
             refreshPlayback();
         }
+    }
+
+    private void savePairing() {
+        try {
+            String token = uploadTokenInput.getText().toString();
+            if (TextUtils.isEmpty(token)) {
+                PairingStore.Pairing existing = pairingStore.load();
+                if (existing == null) throw new IllegalArgumentException(getString(R.string.token_required));
+                token = existing.token;
+            }
+            pairingStore.save(workerOriginInput.getText().toString(), token);
+            uploadTokenInput.setText(""); // Never redisplay a saved token.
+            updatePairingStatus();
+            startService(new Intent(this, PlaybackNotificationListenerService.class));
+        } catch (Exception error) {
+            pairingStatus.setText(error.getMessage() == null ? getString(R.string.pairing_invalid) : error.getMessage());
+        }
+    }
+
+    private void testConnection() {
+        final String origin;
+        try {
+            origin = PairingOrigin.normalize(workerOriginInput.getText().toString());
+        } catch (IllegalArgumentException error) {
+            pairingStatus.setText(error.getMessage());
+            return;
+        }
+        pairingStatus.setText(R.string.testing_connection);
+        new Thread(() -> {
+            boolean connected = new NowPlayingUploader().testConnection(origin);
+            runOnUiThread(() -> pairingStatus.setText(
+                    connected ? R.string.connection_ok : R.string.connection_failed));
+        }, "earphone-wire-connection-test").start();
+    }
+
+    private void clearPairing() {
+        pairingStore.clear();
+        uploadTokenInput.setText("");
+        updatePairingStatus();
+        updateUploadStatus();
+    }
+
+    private void updatePairingStatus() {
+        pairingStatus.setText(pairingStore.isPaired() ? R.string.paired_token_hidden : R.string.not_paired);
+    }
+
+    private void updateUploadStatus() {
+        String status = pairingStore.lastUploadStatus();
+        long time = pairingStore.lastUploadTime();
+        if (status == null || time == 0L) {
+            uploadStatus.setText(R.string.upload_not_sent);
+            return;
+        }
+        String renderedTime = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(new Date(time));
+        uploadStatus.setText(getString(R.string.upload_status_format, status, renderedTime));
     }
 
     private void updateAccessState() {

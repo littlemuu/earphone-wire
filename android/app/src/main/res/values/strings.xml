@@ -40,4 +40,20 @@
     <string name="state_none">无播放状态</string>
     <string name="state_unknown">未知</string>
     <string name="state_other">其他（%1$d）</string>
+    <string name="pairing_section_title">Secure relay pairing</string>
+    <string name="worker_origin_hint">HTTPS Worker origin</string>
+    <string name="upload_token_hint">Android upload token</string>
+    <string name="save_pairing">Save pairing</string>
+    <string name="test_connection">Test connection</string>
+    <string name="clear_pairing">Clear pairing</string>
+    <string name="not_paired">No secure relay pairing saved.</string>
+    <string name="paired_token_hidden">Paired. Upload token is encrypted and hidden.</string>
+    <string name="token_required">Enter an upload token to create a pairing.</string>
+    <string name="pairing_invalid">Pairing settings are invalid.</string>
+    <string name="testing_connection">Testing HTTPS health endpoint…</string>
+    <string name="connection_ok">Worker health endpoint responded.</string>
+    <string name="connection_failed">Could not reach the Worker health endpoint.</string>
+    <string name="upload_section_title">Latest upload</string>
+    <string name="upload_not_sent">No upload has been sent from this device.</string>
+    <string name="upload_status_format">%1$s · %2$s</string>
 </resources>
