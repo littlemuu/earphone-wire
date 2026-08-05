@@ -4,16 +4,11 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
-import android.util.Base64;
 
-import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
-import java.security.SecureRandom;
 
-import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
-import javax.crypto.spec.GCMParameterSpec;
 
 /** Stores only a normalized origin and an Android Keystore-encrypted upload token. */
 public final class PairingStore implements NowPlayingReporter.PairingAccess {
@@ -35,8 +30,9 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
         String normalized = PairingOrigin.normalize(origin);
         if (token == null || token.isEmpty()) throw new IllegalArgumentException("必须输入上传令牌。");
         long version = nextVersion();
-        preferences.edit().putString(ORIGIN, normalized).putString(TOKEN, encrypt(token))
-                .putBoolean(REPAIR_REQUIRED, false).putLong(PAIRING_VERSION, version).apply();
+        saveAtomically(normalized, token, version, this::encrypt, (savedOrigin, packed, savedVersion) ->
+                preferences.edit().putString(ORIGIN, savedOrigin).putString(TOKEN, packed)
+                        .putBoolean(REPAIR_REQUIRED, false).putLong(PAIRING_VERSION, savedVersion).apply());
     }
 
     public synchronized Pairing load() {
@@ -97,26 +93,21 @@ public final class PairingStore implements NowPlayingReporter.PairingAccess {
         return preferences.getLong(PAIRING_VERSION, 0L) + 1L;
     }
 
+    interface Encryptor { String encrypt(String plaintext) throws Exception; }
+    interface PairingCommit { void commit(String origin, String packed, long version); }
+
+    static void saveAtomically(String origin, String token, long version, Encryptor encryptor,
+                               PairingCommit commit) throws Exception {
+        String packed = encryptor.encrypt(token);
+        commit.commit(origin, packed, version);
+    }
+
     private String encrypt(String plaintext) throws Exception {
-        byte[] iv = new byte[12];
-        new SecureRandom().nextBytes(iv);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, iv));
-        byte[] encrypted = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
-        byte[] combined = new byte[iv.length + encrypted.length];
-        System.arraycopy(iv, 0, combined, 0, iv.length);
-        System.arraycopy(encrypted, 0, combined, iv.length, encrypted.length);
-        return Base64.encodeToString(combined, Base64.NO_WRAP);
+        return PairingCipher.encrypt(key(), plaintext, PairingCipher.jcaFactory());
     }
 
     private String decrypt(String packed) throws Exception {
-        byte[] combined = Base64.decode(packed, Base64.NO_WRAP);
-        if (combined.length <= 12) throw new IllegalArgumentException("已保存的配对信息无效。");
-        byte[] iv = new byte[12];
-        System.arraycopy(combined, 0, iv, 0, iv.length);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, iv));
-        return new String(cipher.doFinal(combined, iv.length, combined.length - iv.length), StandardCharsets.UTF_8);
+        return PairingCipher.decrypt(key(), packed, PairingCipher.jcaFactory());
     }
 
     private SecretKey key() throws Exception {
