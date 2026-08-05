@@ -202,7 +202,11 @@ public final class PlaybackNotificationListenerService extends NotificationListe
         private void reportCurrent(MediaController controller) {
             if (Thread.currentThread() != handler.getLooper().getThread() || !isRunning()) return;
             MediaMetadata metadata = controller.getMetadata();
+            long diagnosticEvent = MetadataDiagnostics.logInput(
+                    "PlaybackNotificationListenerService", controller, metadata);
             QqMusicMetadataMapper.Result normalized = QqMusicMetadataMapper.map(metadata);
+            MetadataDiagnostics.logOutput(
+                    diagnosticEvent, "PlaybackNotificationListenerService", normalized);
             if (normalized.title == null) return;
             reporter.observe(normalized.title, normalized.artist == null ? "" : normalized.artist,
                     PlaybackStateMapper.toUploadState(controller.getPlaybackState()));
