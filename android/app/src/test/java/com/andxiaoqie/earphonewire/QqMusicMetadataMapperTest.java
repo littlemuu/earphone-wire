@@ -6,20 +6,33 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 public final class QqMusicMetadataMapperTest {
-    @Test public void currentDeviceRegressionUsesDisplayTitleToNormalizeTheCombinedArtist() {
+    @Test public void qqMusicUsesTitleInsteadOfItsRollingDisplayLyric() {
         QqMusicMetadataMapper.Result result = map(
-                "Fine Again", null, "a changing lyric line", "Fine Again-Seether", null, null, null);
-        assertEquals("Fine Again", result.title);
-        assertEquals("Seether", result.artist);
+                "Summer has come and passed", null,
+                "Wake Me Up When September Ends",
+                "Wake Me Up When September Ends-Green Day", null, null, null);
+        assertEquals("Wake Me Up When September Ends", result.title);
+        assertEquals("Green Day", result.artist);
     }
 
-    @Test public void changingLyricsDoNotChangeTheNormalizedSongOrArtist() {
+    @Test public void changingDisplayLyricsDoNotChangeTheNormalizedSongOrArtist() {
         QqMusicMetadataMapper.Result first = map(
-                "Fine Again", null, "first scrolling lyric", "Fine Again-Seether", null, null, null);
+                "Lyrics by：Billie Joe Armstrong", null,
+                "Wake Me Up When September Ends",
+                "Wake Me Up When September Ends-Green Day", null, null, null);
         QqMusicMetadataMapper.Result second = map(
-                "Fine Again", null, "second scrolling lyric", "Fine Again-Seether", null, null, null);
+                "The innocent can never last", null,
+                "Wake Me Up When September Ends",
+                "Wake Me Up When September Ends-Green Day", null, null, null);
         assertEquals(first.title, second.title);
         assertEquals(first.artist, second.artist);
+    }
+
+    @Test public void titleAndCombinedArtistAreNormalizedWithoutDisplayFields() {
+        QqMusicMetadataMapper.Result result = map(
+                null, null, "Fine Again", "Fine Again-Seether", null, null, null);
+        assertEquals("Fine Again", result.title);
+        assertEquals("Seether", result.artist);
     }
 
     @Test public void standardIndependentTitleAndArtistRemainTheFallbackWithoutDisplayFields() {
@@ -29,31 +42,38 @@ public final class QqMusicMetadataMapperTest {
         assertEquals("Fallback Artist", result.artist);
     }
 
-    @Test public void displayFieldsTakePriorityOverRawTitleAndArtist() {
+    @Test public void stableTitleTakesPriorityOverDisplayTitleAndArtistFieldsRemainIndependent() {
         QqMusicMetadataMapper.Result result = map(
-                "Display Song", "Display Artist", "Raw title", "Raw artist", "Album artist", null, null);
-        assertEquals("Display Song", result.title);
-        assertEquals("Display Artist", result.artist);
+                "Scrolling lyric", "Display artist", "Stable song", "Stable artist", "Album artist", null, null);
+        assertEquals("Stable song", result.title);
+        assertEquals("Stable artist", result.artist);
     }
 
-    @Test public void hyphenInSongTitleIsPreservedWhenKnownArtistConfirmsOnlyTheSuffix() {
+    @Test public void displayTitleRemainsTheFallbackWhenTitleIsMissing() {
         QqMusicMetadataMapper.Result result = map(
-                null, "Artist", "Rock-n-Roll-Artist", null, null, null, null);
+                "Display song", null, null, "Independent artist", null, null, null);
+        assertEquals("Display song", result.title);
+        assertEquals("Independent artist", result.artist);
+    }
+
+    @Test public void hyphenInSongTitleIsPreservedWhenExactTitlePrefixConfirmsTheArtist() {
+        QqMusicMetadataMapper.Result result = map(
+                null, null, "Rock-n-Roll", "Rock-n-Roll-Artist", null, null, null);
         assertEquals("Rock-n-Roll", result.title);
         assertEquals("Artist", result.artist);
     }
 
-    @Test public void hyphenInArtistIsPreservedWhenKnownTitleConfirmsOnlyThePrefix() {
+    @Test public void hyphenInArtistIsPreservedAfterExactTitlePrefixIsRemoved() {
         QqMusicMetadataMapper.Result result = map(
-                "Song", null, "raw changing text", "Song-Jay-Z", null, null, null);
+                null, null, "Song", "Song-Jay-Z", null, null, null);
         assertEquals("Song", result.title);
         assertEquals("Jay-Z", result.artist);
     }
 
-    @Test public void combinedTextWithoutIndependentEvidenceIsNeverGuessedApart() {
+    @Test public void nonMatchingArtistTextIsNeverGuessedApart() {
         QqMusicMetadataMapper.Result result = map(
-                null, null, null, "Uncertain-Value", null, null, null);
-        assertNull(result.title);
+                null, null, "Known", "Uncertain-Value", null, null, null);
+        assertEquals("Known", result.title);
         assertEquals("Uncertain-Value", result.artist);
     }
 
@@ -73,7 +93,7 @@ public final class QqMusicMetadataMapperTest {
 
     @Test public void theSingleMapperProducesTheSameResultForHomeAndServiceInputs() {
         QqMusicMetadataMapper.Candidates candidates = new QqMusicMetadataMapper.Candidates(
-                "Shared Song", null, "raw text", "Shared Song-Shared Artist", null, null, null);
+                "A rolling lyric", null, "Shared Song", "Shared Song-Shared Artist", null, null, null);
         QqMusicMetadataMapper.Result home = QqMusicMetadataMapper.map(candidates);
         QqMusicMetadataMapper.Result service = QqMusicMetadataMapper.map(candidates);
         assertEquals(home.title, service.title);

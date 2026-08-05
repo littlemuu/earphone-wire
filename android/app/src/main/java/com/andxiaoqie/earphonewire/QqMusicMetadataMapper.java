@@ -82,38 +82,18 @@ final class QqMusicMetadataMapper {
     }
 
     static Result map(Candidates values) {
-        Candidate title = first(values.displayTitle, values.title, values.descriptionTitle);
-        Candidate artist = first(values.displaySubtitle, values.artist, values.albumArtist,
+        // QQ Music places its rolling lyric in DISPLAY_TITLE. TITLE is the stable song field.
+        Candidate title = first(values.title, values.displayTitle, values.descriptionTitle);
+        Candidate artist = first(values.artist, values.albumArtist, values.displaySubtitle,
                 values.descriptionSubtitle);
 
-        Candidate titleEvidence = independentTitleEvidence(values, artist);
-        if (artist != null && titleEvidence != null) {
-            String derivedArtist = suffixAfterExactTitle(artist.value, titleEvidence.value);
+        // Only TITLE is independent evidence that ARTIST is QQ Music's "title-artist" form.
+        if (title != null && values.title.present() && values.artist.present()) {
+            String derivedArtist = suffixAfterExactTitle(values.artist.value, values.title.value);
             if (derivedArtist != null) artist = new Candidate(artist.source, derivedArtist);
         }
 
-        Candidate artistEvidence = independentArtistEvidence(values, title);
-        if (title != null && artistEvidence != null) {
-            String derivedTitle = prefixBeforeExactArtist(title.value, artistEvidence.value);
-            if (derivedTitle != null) title = new Candidate(title.source, derivedTitle);
-        }
-
         return new Result(title == null ? null : title.value, artist == null ? null : artist.value);
-    }
-
-    private static Candidate independentTitleEvidence(Candidates values, Candidate combined) {
-        return firstIndependent(combined, values.displayTitle, values.title);
-    }
-
-    private static Candidate independentArtistEvidence(Candidates values, Candidate combined) {
-        return firstIndependent(combined, values.displaySubtitle, values.artist, values.albumArtist);
-    }
-
-    private static Candidate firstIndependent(Candidate combined, Candidate... candidates) {
-        for (Candidate candidate : candidates) {
-            if (candidate != null && candidate.present() && candidate != combined) return candidate;
-        }
-        return null;
     }
 
     private static Candidate first(Candidate... candidates) {
@@ -127,12 +107,6 @@ final class QqMusicMetadataMapper {
         String prefix = title + "-";
         if (!combined.startsWith(prefix)) return null;
         return normalize(combined.substring(prefix.length()));
-    }
-
-    private static String prefixBeforeExactArtist(String combined, String artist) {
-        String suffix = "-" + artist;
-        if (!combined.endsWith(suffix)) return null;
-        return normalize(combined.substring(0, combined.length() - suffix.length()));
     }
 
     private static String normalize(CharSequence value) {
