@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { defaultHandler, mcpApiHandler, NowPlayingDurableObject } from "../src/index";
+import { defaultHandler, mcpApiHandler, NowPlayingDurableObject, worker } from "../src/index";
 import { mcpToolScopeChallenge } from "../src/index";
 import type { WorkerEnv } from "../src/env";
 import type { NowPlayingSnapshot } from "../src/now-playing";
@@ -77,15 +77,25 @@ function relayEnv(records: Record<string, Record<string, unknown> | null> = {}):
   };
 }
 
-function mcpRequest(method: string, token: string): Request {
+function mcpRequest(method: string, token?: string): Request {
+  const headers = new Headers({
+    "content-type": "application/json",
+    Accept: "application/json, text/event-stream",
+  });
+  if (token !== undefined) headers.set("Authorization", `Bearer ${token}`);
   return new Request(`${RESOURCE}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: method === "tools/call" ? { name: "get_now_playing", arguments: {} } : {} }),
+    headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params: method === "tools/call"
+        ? { name: "get_now_playing", arguments: {} }
+        : method === "initialize"
+          ? { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1.0.0" } }
+          : {},
+    }),
   });
 }
 
@@ -155,6 +165,74 @@ describe("secure relay in Workerd/Miniflare", () => {
       );
       expect(response.status).toBe(400);
     }
+  });
+
+  it("allows anonymous MCP initialize and lists only the secured read-only tool", async () => {
+    const initialize = await worker.fetch(
+      mcpRequest("initialize"),
+      env as WorkerEnv,
+      testContext(),
+    );
+    expect(initialize.status).toBe(200);
+
+    const list = await worker.fetch(
+      mcpRequest("tools/list"),
+      env as WorkerEnv,
+      testContext(),
+    );
+    expect(list.status).toBe(200);
+    const payload = await mcpPayload(list) as {
+      result: { tools: Array<{ name: string; securitySchemes?: unknown; annotations?: unknown }> };
+    };
+    expect(payload.result.tools).toHaveLength(1);
+    expect(payload.result.tools[0]).toMatchObject({
+      name: "get_now_playing",
+      securitySchemes: [{ type: "oauth2", scopes: ["playback:read"] }],
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    });
+  });
+
+  it("returns an MCP invalid-token challenge for anonymous tools/call without reading the DO", async () => {
+    let latestCalls = 0;
+    const testEnv = {
+      ...(env as WorkerEnv),
+      NOW_PLAYING: {
+        getByName: () => ({
+          latest: async () => {
+            latestCalls += 1;
+            return snapshot();
+          },
+        }),
+      },
+    } as WorkerEnv;
+    const response = await worker.fetch(mcpRequest("tools/call"), testEnv, testContext());
+    expect(response.status).toBe(200);
+    const payload = await mcpPayload(response) as {
+      result: { isError?: boolean; _meta?: Record<string, unknown> };
+    };
+    expect(payload.result.isError).toBe(true);
+    expect(payload.result._meta?.["mcp/www_authenticate"]).toEqual([
+      expect.stringContaining('error="invalid_token"'),
+    ]);
+    const challenge = (payload.result._meta?.["mcp/www_authenticate"] as string[])[0];
+    expect(challenge).toContain('error_description="Authentication is required."');
+    expect(challenge).toContain('scope="playback:read"');
+    expect(challenge).toContain("resource_metadata=");
+    expect(latestCalls).toBe(0);
+  });
+
+  it("keeps invalid bearer requests behind the OAuthProvider HTTP challenge", async () => {
+    const response = await worker.fetch(
+      mcpRequest("tools/list", "invalid-bearer"),
+      env as WorkerEnv,
+      testContext(),
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toContain("resource_metadata");
   });
 
   it("writes through a real Durable Object RPC and reads the resulting state via MCP", async () => {

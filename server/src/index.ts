@@ -63,6 +63,10 @@ export function mcpToolScopeChallenge(request: Request): string {
   return `Bearer error="insufficient_scope", error_description="This tool requires the playback:read scope.", scope="${PLAYBACK_SCOPE}", resource_metadata="${protectedResourceMetadata(request)}"`;
 }
 
+export function mcpToolAuthenticationChallenge(request: Request): string {
+  return `Bearer error="invalid_token", error_description="Authentication is required.", scope="${PLAYBACK_SCOPE}", resource_metadata="${protectedResourceMetadata(request)}"`;
+}
+
 function unauthorizedMcp(request: Request): Response {
   return noStore(
     new Response("Unauthorized", {
@@ -193,7 +197,9 @@ function createServer(env: WorkerEnv, request: Request): McpServer {
     },
   );
   const expectedResource = mcpResource(request);
-  const challenge = mcpToolScopeChallenge(request);
+  const challenge = request.headers.has("authorization")
+    ? mcpToolScopeChallenge(request)
+    : mcpToolAuthenticationChallenge(request);
 
   server.registerTool(
     "get_now_playing",
@@ -293,10 +299,21 @@ async function addToolSecuritySchemes(isToolsList: boolean, response: Response):
 
 export const mcpApiHandler: FetchHandler = {
   async fetch(request, env, ctx): Promise<Response> {
+    const body = await request.clone().json().catch(() => null) as { method?: unknown } | null;
+    // OAuthProvider deliberately protects /mcp when an Authorization header is
+    // present. Let unauthenticated MCP discovery reach the handler so clients
+    // can initialize and list this tool; tools/call still verifies before DO I/O.
+    if (!request.headers.has("authorization")) {
+      const response = await createMcpHandler(() => createServer(env, request), {
+        route: "/mcp",
+        corsOptions: false,
+      })(request, env, ctx);
+      return addToolSecuritySchemes(body?.method === "tools/list", response);
+    }
+
     const verified = await verifyMcpAccess(request, env, ctx.props as Record<string, unknown>);
     if (!verified) return unauthorizedMcp(request);
     attachVerifiedMcpContext(ctx, verified);
-    const body = await request.clone().json().catch(() => null) as { method?: unknown } | null;
 
     const response = await createMcpHandler(() => createServer(env, request), {
       route: "/mcp",
@@ -355,6 +372,10 @@ const oauthProvider = new OAuthProvider<WorkerEnv>({
 
 export const worker: FetchHandler = {
   async fetch(request, env, ctx): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/mcp" && !request.headers.has("authorization")) {
+      return noStore(await mcpApiHandler.fetch(request, env, ctx));
+    }
     return noStore(await oauthProvider.fetch(request, env, ctx));
   },
 };

@@ -256,14 +256,20 @@ check(
 );
 
 const anonymousMcp = await worker.fetch(
-  new Request("http://localhost/mcp", { method: "POST", body: "{}" }),
+  new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json, text/event-stream", host: "localhost" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "unit", version: "1.0.0" } },
+    }),
+  }),
   env,
   context(),
 );
-check(
-  anonymousMcp.status === 401 && anonymousMcp.headers.get("www-authenticate")?.includes("resource_metadata"),
-  "anonymous MCP request receives OAuth challenge",
-);
+check(anonymousMcp.status === 200, "anonymous MCP initialize reaches the discovery handler");
 const toolScopeChallenge = mcpToolScopeChallenge(new Request("http://localhost/mcp"));
 check(
   toolScopeChallenge.includes("resource_metadata=") &&
