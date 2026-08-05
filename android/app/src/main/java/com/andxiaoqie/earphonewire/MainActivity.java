@@ -6,7 +6,6 @@ import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Color;
-import android.media.MediaDescription;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -319,27 +318,10 @@ public final class MainActivity extends Activity {
 
     private void showQqMusicSession(MediaController controller) {
         MediaMetadata metadata = controller.getMetadata();
-        CharSequence title = null;
-        CharSequence artist = null;
+        QqMusicMetadataMapper.Result normalized = QqMusicMetadataMapper.map(metadata);
 
-        if (metadata != null) {
-            title = firstNonEmpty(
-                    metadata.getText(MediaMetadata.METADATA_KEY_TITLE),
-                    metadata.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            );
-            artist = firstNonEmpty(
-                    metadata.getText(MediaMetadata.METADATA_KEY_ARTIST),
-                    metadata.getText(MediaMetadata.METADATA_KEY_ALBUM_ARTIST),
-                    metadata.getText(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
-            );
-
-            MediaDescription description = metadata.getDescription();
-            title = firstNonEmpty(title, description.getTitle());
-            artist = firstNonEmpty(artist, description.getSubtitle());
-        }
-
-        resultTitle.setText(orFallback(title, getString(R.string.unknown_title)));
-        resultArtist.setText(orFallback(artist, getString(R.string.unknown_artist)));
+        resultTitle.setText(orFallback(normalized.title, getString(R.string.unknown_title)));
+        resultArtist.setText(orFallback(normalized.artist, getString(R.string.unknown_artist)));
 
         String observedAt = new SimpleDateFormat(
                 "yyyy-MM-dd HH:mm:ss",
@@ -351,15 +333,6 @@ public final class MainActivity extends Activity {
                 controller.getPackageName(),
                 observedAt
         ));
-    }
-
-    private CharSequence firstNonEmpty(CharSequence... values) {
-        for (CharSequence value : values) {
-            if (!TextUtils.isEmpty(value)) {
-                return value;
-            }
-        }
-        return null;
     }
 
     private CharSequence orFallback(CharSequence value, String fallback) {

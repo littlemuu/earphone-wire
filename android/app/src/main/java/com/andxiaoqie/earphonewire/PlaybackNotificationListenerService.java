@@ -1,7 +1,6 @@
 package com.andxiaoqie.earphonewire;
 
 import android.content.ComponentName;
-import android.media.MediaDescription;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
@@ -10,7 +9,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.service.notification.NotificationListenerService;
-import android.text.TextUtils;
 
 import java.util.List;
 
@@ -204,25 +202,10 @@ public final class PlaybackNotificationListenerService extends NotificationListe
         private void reportCurrent(MediaController controller) {
             if (Thread.currentThread() != handler.getLooper().getThread() || !isRunning()) return;
             MediaMetadata metadata = controller.getMetadata();
-            if (metadata == null) return;
-            MediaDescription description = metadata.getDescription();
-            CharSequence title = firstNonEmpty(
-                    metadata.getText(MediaMetadata.METADATA_KEY_TITLE),
-                    metadata.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE),
-                    description == null ? null : description.getTitle());
-            if (TextUtils.isEmpty(title)) return;
-            CharSequence artist = firstNonEmpty(
-                    metadata.getText(MediaMetadata.METADATA_KEY_ARTIST),
-                    metadata.getText(MediaMetadata.METADATA_KEY_ALBUM_ARTIST),
-                    metadata.getText(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE),
-                    description == null ? null : description.getSubtitle());
-            reporter.observe(title.toString(), artist == null ? "" : artist.toString(),
+            QqMusicMetadataMapper.Result normalized = QqMusicMetadataMapper.map(metadata);
+            if (normalized.title == null) return;
+            reporter.observe(normalized.title, normalized.artist == null ? "" : normalized.artist,
                     PlaybackStateMapper.toUploadState(controller.getPlaybackState()));
         }
-    }
-
-    private static CharSequence firstNonEmpty(CharSequence... values) {
-        for (CharSequence value : values) if (!TextUtils.isEmpty(value)) return value;
-        return null;
     }
 }
