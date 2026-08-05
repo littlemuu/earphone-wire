@@ -318,9 +318,7 @@ public final class MainActivity extends Activity {
 
     private void showQqMusicSession(MediaController controller) {
         MediaMetadata metadata = controller.getMetadata();
-        long diagnosticEvent = MetadataDiagnostics.logInput("MainActivity", controller, metadata);
         QqMusicMetadataMapper.Result normalized = QqMusicMetadataMapper.map(metadata);
-        MetadataDiagnostics.logOutput(diagnosticEvent, "MainActivity", normalized);
 
         resultTitle.setText(orFallback(normalized.title, getString(R.string.unknown_title)));
         resultArtist.setText(orFallback(normalized.artist, getString(R.string.unknown_artist)));

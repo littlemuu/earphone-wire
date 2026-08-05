@@ -82,16 +82,15 @@ final class QqMusicMetadataMapper {
     }
 
     static Result map(Candidates values) {
-        // QQ Music places its rolling lyric in DISPLAY_TITLE. TITLE is the stable song field.
+        String combinedTitle = titleFromExactAlbumArtistSuffix(values.artist, values.albumArtist);
+        if (combinedTitle != null) {
+            return new Result(combinedTitle, values.albumArtist.value);
+        }
+
+        // When no QQ Music combined field is proven, retain the normal metadata fallback order.
         Candidate title = first(values.title, values.displayTitle, values.descriptionTitle);
         Candidate artist = first(values.artist, values.albumArtist, values.displaySubtitle,
                 values.descriptionSubtitle);
-
-        // Only TITLE is independent evidence that ARTIST is QQ Music's "title-artist" form.
-        if (title != null && values.title.present() && values.artist.present()) {
-            String derivedArtist = suffixAfterExactTitle(values.artist.value, values.title.value);
-            if (derivedArtist != null) artist = new Candidate(artist.source, derivedArtist);
-        }
 
         return new Result(title == null ? null : title.value, artist == null ? null : artist.value);
     }
@@ -103,10 +102,13 @@ final class QqMusicMetadataMapper {
         return null;
     }
 
-    private static String suffixAfterExactTitle(String combined, String title) {
-        String prefix = title + "-";
-        if (!combined.startsWith(prefix)) return null;
-        return normalize(combined.substring(prefix.length()));
+    private static String titleFromExactAlbumArtistSuffix(Candidate rawArtist,
+                                                           Candidate albumArtist) {
+        if (rawArtist == null || !rawArtist.present()
+                || albumArtist == null || !albumArtist.present()) return null;
+        String suffix = "-" + albumArtist.value;
+        if (!rawArtist.value.endsWith(suffix)) return null;
+        return normalize(rawArtist.value.substring(0, rawArtist.value.length() - suffix.length()));
     }
 
     private static String normalize(CharSequence value) {
