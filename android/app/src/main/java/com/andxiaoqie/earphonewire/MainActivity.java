@@ -6,7 +6,6 @@ import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Color;
-import android.media.MediaDescription;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -17,6 +16,7 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 
 import java.text.SimpleDateFormat;
@@ -37,6 +37,11 @@ public final class MainActivity extends Activity {
     private TextView resultDetails;
     private Button openAccessButton;
     private Button refreshButton;
+    private EditText workerOriginInput;
+    private EditText uploadTokenInput;
+    private TextView pairingStatus;
+    private TextView uploadStatus;
+    private PairingStore pairingStore;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,6 +55,15 @@ public final class MainActivity extends Activity {
         resultDetails = findViewById(R.id.result_details);
         openAccessButton = findViewById(R.id.open_access_button);
         refreshButton = findViewById(R.id.refresh_button);
+        workerOriginInput = findViewById(R.id.worker_origin_input);
+        uploadTokenInput = findViewById(R.id.upload_token_input);
+        pairingStatus = findViewById(R.id.pairing_status);
+        uploadStatus = findViewById(R.id.upload_status);
+        pairingStore = new PairingStore(this);
+
+        workerOriginInput.setText(pairingStore.savedOrigin());
+        updatePairingStatus();
+        updateUploadStatus();
 
         openAccessButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -63,15 +77,84 @@ public final class MainActivity extends Activity {
                 refreshPlayback();
             }
         });
+        findViewById(R.id.save_pairing_button).setOnClickListener(view -> savePairing());
+        findViewById(R.id.test_connection_button).setOnClickListener(view -> testConnection());
+        findViewById(R.id.clear_pairing_button).setOnClickListener(view -> clearPairing());
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         updateAccessState();
+        updatePairingStatus();
+        updateUploadStatus();
         if (isNotificationListenerEnabled()) {
             refreshPlayback();
         }
+    }
+
+    private void savePairing() {
+        try {
+            String token = uploadTokenInput.getText().toString();
+            if (TextUtils.isEmpty(token)) {
+                if (pairingStore.requiresRePairing()) {
+                    throw new IllegalArgumentException(getString(R.string.new_token_required));
+                }
+                PairingStore.Pairing existing = pairingStore.load();
+                if (existing == null) throw new IllegalArgumentException(getString(R.string.token_required));
+                token = existing.token;
+            }
+            pairingStore.save(workerOriginInput.getText().toString(), token);
+            uploadTokenInput.setText(""); // Never redisplay a saved token.
+            updatePairingStatus();
+            PairingEvents.notifyChanged();
+        } catch (Exception error) {
+            pairingStatus.setText(error.getMessage() == null ? getString(R.string.pairing_invalid) : error.getMessage());
+        }
+    }
+
+    private void testConnection() {
+        final String origin;
+        try {
+            origin = PairingOrigin.normalize(workerOriginInput.getText().toString());
+        } catch (IllegalArgumentException error) {
+            pairingStatus.setText(error.getMessage());
+            return;
+        }
+        pairingStatus.setText(R.string.testing_connection);
+        new Thread(() -> {
+            boolean connected = new NowPlayingUploader().testConnection(origin);
+            runOnUiThread(() -> pairingStatus.setText(
+                    connected ? R.string.connection_ok : R.string.connection_failed));
+        }, "earphone-wire-connection-test").start();
+    }
+
+    private void clearPairing() {
+        pairingStore.clear();
+        uploadTokenInput.setText("");
+        updatePairingStatus();
+        updateUploadStatus();
+        PairingEvents.notifyChanged();
+    }
+
+    private void updatePairingStatus() {
+        if (pairingStore.requiresRePairing()) {
+            pairingStatus.setText(R.string.repair_required);
+        } else {
+            pairingStatus.setText(pairingStore.isPaired() ? R.string.paired_token_hidden : R.string.not_paired);
+        }
+    }
+
+    private void updateUploadStatus() {
+        String status = pairingStore.lastUploadStatus();
+        long time = pairingStore.lastUploadTime();
+        if (status == null || time == 0L) {
+            uploadStatus.setText(R.string.upload_not_sent);
+            return;
+        }
+        String renderedTime = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(new Date(time));
+        uploadStatus.setText(getString(R.string.upload_status_format, status, renderedTime));
     }
 
     private void updateAccessState() {
@@ -235,27 +318,10 @@ public final class MainActivity extends Activity {
 
     private void showQqMusicSession(MediaController controller) {
         MediaMetadata metadata = controller.getMetadata();
-        CharSequence title = null;
-        CharSequence artist = null;
+        QqMusicMetadataMapper.Result normalized = QqMusicMetadataMapper.map(metadata);
 
-        if (metadata != null) {
-            title = firstNonEmpty(
-                    metadata.getText(MediaMetadata.METADATA_KEY_TITLE),
-                    metadata.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            );
-            artist = firstNonEmpty(
-                    metadata.getText(MediaMetadata.METADATA_KEY_ARTIST),
-                    metadata.getText(MediaMetadata.METADATA_KEY_ALBUM_ARTIST),
-                    metadata.getText(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
-            );
-
-            MediaDescription description = metadata.getDescription();
-            title = firstNonEmpty(title, description.getTitle());
-            artist = firstNonEmpty(artist, description.getSubtitle());
-        }
-
-        resultTitle.setText(orFallback(title, getString(R.string.unknown_title)));
-        resultArtist.setText(orFallback(artist, getString(R.string.unknown_artist)));
+        resultTitle.setText(orFallback(normalized.title, getString(R.string.unknown_title)));
+        resultArtist.setText(orFallback(normalized.artist, getString(R.string.unknown_artist)));
 
         String observedAt = new SimpleDateFormat(
                 "yyyy-MM-dd HH:mm:ss",
@@ -267,15 +333,6 @@ public final class MainActivity extends Activity {
                 controller.getPackageName(),
                 observedAt
         ));
-    }
-
-    private CharSequence firstNonEmpty(CharSequence... values) {
-        for (CharSequence value : values) {
-            if (!TextUtils.isEmpty(value)) {
-                return value;
-            }
-        }
-        return null;
     }
 
     private CharSequence orFallback(CharSequence value, String fallback) {
