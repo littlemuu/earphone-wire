@@ -372,8 +372,12 @@ const oauthProvider = new OAuthProvider<WorkerEnv>({
     bearer_methods_supported: ["header"],
     resource_name: "Earphone Wire private playback MCP",
   },
-  onError: ({ status, headers }) =>
-    noStore(new Response("OAuth request rejected", { status, headers })),
+  onError: ({ status, headers, code, description }) => {
+    // Provider-generated OAuth diagnostics only: do not log request bodies,
+    // authorization codes, bearer tokens, cookies, or headers.
+    console.warn("OAuth provider rejected request", { status, code, description });
+    return noStore(new Response("OAuth request rejected", { status, headers }));
+  },
 });
 
 export const worker: FetchHandler = {
