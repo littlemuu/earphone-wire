@@ -79,7 +79,7 @@ QQ 音乐滚动歌词时，`TITLE` 可能变成当前歌词，而 `ARTIST` 会�
 https://earphone-wire-mcp.andxiaoqie.workers.dev/mcp
 ```
 
-随后完成 GitHub 登录并授权 `playback:read`。只有 `ALLOWED_GITHUB_USER_ID` 指定的数字 GitHub 用户 ID 可以读取快照。
+随后完成 GitHub 登录并授权 `playback:read`。OAuth 授权服务器同时声明 `offline_access`，让 ChatGPT 可以持有并轮换 refresh token 以维持长期连接；`offline_access` 不是播放数据权限，MCP 受保护资源和工具本身仍只要求 `playback:read`。只有 `ALLOWED_GITHUB_USER_ID` 指定的数字 GitHub 用户 ID 可以读取快照。
 
 连接成功后，可调用 `get_now_playing` 获取：
 

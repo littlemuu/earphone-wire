@@ -15,6 +15,8 @@ import { noStore } from "./upload";
 const LOGIN_COOKIE = "__Host-earphone-wire-oauth";
 const LOGIN_TTL_MS = 10 * 60 * 1_000;
 const PLAYBACK_SCOPE = "playback:read";
+const OFFLINE_ACCESS_SCOPE = "offline_access";
+const AUTHORIZATION_SCOPES = new Set([PLAYBACK_SCOPE, OFFLINE_ACCESS_SCOPE]);
 
 type LoginCookie = {
   request: AuthRequest;
@@ -83,7 +85,16 @@ function loginCookie(value: string, maxAge: number): string {
 }
 
 function isSupportedScope(scope: string[]): boolean {
-  return scope.length > 0 && scope.every((entry) => entry === PLAYBACK_SCOPE);
+  return (
+    scope.includes(PLAYBACK_SCOPE) &&
+    scope.every((entry) => AUTHORIZATION_SCOPES.has(entry))
+  );
+}
+
+function grantedScopes(scope: string[]): string[] {
+  return scope.filter(
+    (entry, index) => AUTHORIZATION_SCOPES.has(entry) && scope.indexOf(entry) === index,
+  );
 }
 
 function hasExactMcpResource(resource: AuthRequest["resource"], origin: string): boolean {
@@ -219,7 +230,7 @@ export async function handleGitHubCallback(
     request: login.request,
     userId,
     metadata: { githubUserId: userId },
-    scope: [PLAYBACK_SCOPE],
+    scope: grantedScopes(login.request.scope),
     props: { githubUserId: userId },
   });
   return new Response(null, {
@@ -232,4 +243,4 @@ export async function handleGitHubCallback(
   });
 }
 
-export { PLAYBACK_SCOPE };
+export { OFFLINE_ACCESS_SCOPE, PLAYBACK_SCOPE };

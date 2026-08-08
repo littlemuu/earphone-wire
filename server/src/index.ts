@@ -6,6 +6,7 @@ import type { WorkerEnv } from "./env";
 import {
   handleAuthorizationRequest,
   handleGitHubCallback,
+  OFFLINE_ACCESS_SCOPE,
   PLAYBACK_SCOPE,
 } from "./github-oauth";
 import { nowPlayingOutputSchema, toNowPlayingResult } from "./now-playing";
@@ -42,6 +43,7 @@ const VERIFIED_OAUTH_CONTEXT = Symbol.for(
   "cloudflare.workers-oauth-provider.verified-context.v1",
 );
 const TOOL_SECURITY_SCHEMES = [{ type: "oauth2", scopes: [PLAYBACK_SCOPE] }];
+const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 function mcpResource(request: Request): string {
   return `${new URL(request.url).origin}/mcp`;
@@ -282,7 +284,7 @@ async function addToolSecuritySchemes(isToolsList: boolean, response: Response):
   let changed = false;
   const rewritten = eventStream.replace(/^data:\s*(.+)$/gmu, (line, json: string) => {
     const payload = JSON.parse(json) as {
-    result?: { tools?: Array<{ name?: unknown; securitySchemes?: unknown }> };
+      result?: { tools?: Array<{ name?: unknown; securitySchemes?: unknown }> };
     };
     if (!addToPayload(payload)) return line;
     changed = true;
@@ -359,7 +361,11 @@ const oauthProvider = new OAuthProvider<WorkerEnv>({
   tokenEndpoint: "/oauth/token",
   clientRegistrationEndpoint: "/oauth/register",
   clientIdMetadataDocumentEnabled: true,
-  scopesSupported: [PLAYBACK_SCOPE],
+  // ChatGPT requests offline_access so it can retain a refresh token. This is
+  // an authorization-server capability only; MCP tool access still requires
+  // playback:read and the protected-resource metadata stays minimal.
+  scopesSupported: [PLAYBACK_SCOPE, OFFLINE_ACCESS_SCOPE],
+  refreshTokenTTL: REFRESH_TOKEN_TTL_SECONDS,
   allowPlainPKCE: false,
   resourceMetadata: {
     scopes_supported: [PLAYBACK_SCOPE],
