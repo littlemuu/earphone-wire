@@ -20,6 +20,7 @@
 3. App 规范化歌名、歌手与播放状态，并通过 HTTPS Bearer 请求上传最新快照。
 4. Worker 在 Durable Object 中只保留一份最新快照。
 5. ChatGPT 通过 GitHub OAuth、数字 GitHub 用户 ID 白名单和 `playback:read` scope 调用只读 MCP 工具。
+6. 小目和小切的网站可由已登录的 Supabase Edge Function 使用独立服务端令牌读取同一快照；浏览器不接触令牌，也不能跨域直读 Worker。
 
 上传字段仅包含：
 
@@ -106,6 +107,7 @@ npx wrangler deploy --dry-run
 
 ```bash
 npx wrangler secret put ANDROID_UPLOAD_TOKEN
+npx wrangler secret put SITE_READ_TOKEN
 npx wrangler secret put ALLOWED_GITHUB_USER_ID
 npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
@@ -121,7 +123,8 @@ GitHub OAuth App 使用：
 
 ## 安全与隐私边界
 
-- 上传接口不开放 CORS，也没有读取快照的普通 HTTP GET 端点。
+- 上传接口与服务端读取接口都不开放 CORS；浏览器没有读取快照的普通 HTTP 入口。
+- `/api/v1/site-now-playing` 只接受独立的 `SITE_READ_TOKEN`，不能使用 Android 上传令牌或 GitHub OAuth token，并返回 `Cache-Control: no-store`。
 - `/health` 匿名可用，但只返回服务状态，不包含播放数据。
 - Android 禁止明文流量，只增加 `INTERNET` 权限及用户主动开启的通知监听服务。
 - App 不请求存储、麦克风、相机、无障碍或通知正文权限。
@@ -133,3 +136,4 @@ GitHub OAuth App 使用：
 
 - `android/`：QQ 音乐 MediaSession 读取、安全配对与快照上报
 - `server/`：Cloudflare Worker、Durable Object、GitHub OAuth 与私有 MCP
+
