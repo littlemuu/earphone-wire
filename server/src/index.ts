@@ -11,6 +11,7 @@ import {
 } from "./github-oauth";
 import { nowPlayingOutputSchema, toNowPlayingResult } from "./now-playing";
 import { constantTimeEqual } from "./security";
+import { handleSiteNowPlayingRead } from "./site-read";
 import { handleNowPlayingUpload, noStore } from "./upload";
 
 export { NowPlayingDurableObject } from "./now-playing-do";
@@ -334,6 +335,7 @@ export const defaultHandler: FetchHandler = {
       );
     }
     if (url.pathname === "/api/v1/now-playing") return handleNowPlayingUpload(request, env);
+    if (url.pathname === "/api/v1/site-now-playing") return handleSiteNowPlayingRead(request, env);
     if (url.pathname === "/authorize") {
       if (!env.OAUTH_PROVIDER) return noStore(new Response("Authorization unavailable", { status: 503 }));
       return handleAuthorizationRequest(request, env, env.OAUTH_PROVIDER);
@@ -391,3 +393,4 @@ export const worker: FetchHandler = {
 };
 
 export default worker;
+

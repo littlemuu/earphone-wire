@@ -17,6 +17,7 @@ import {
   toNowPlayingResult,
   type NowPlayingSnapshot,
 } from "../src/now-playing";
+import { handleSiteNowPlayingRead } from "../src/site-read";
 import { handleNowPlayingUpload } from "../src/upload";
 
 let passed = 0;
@@ -106,12 +107,14 @@ class FakeDurableObjectState {
 }
 
 const uploadToken = crypto.randomUUID();
+const siteReadToken = crypto.randomUUID();
 const allowedGithubUserId = String(Math.floor(Math.random() * 900_000_000) + 100_000_000);
 const store = new MemoryNowPlayingStore();
 const env: WorkerEnv = {
   NOW_PLAYING: { getByName: () => store } as unknown as DurableObjectNamespace<NowPlayingDurableObject>,
   OAUTH_KV: {} as KVNamespace,
   ANDROID_UPLOAD_TOKEN: uploadToken,
+  SITE_READ_TOKEN: siteReadToken,
   ALLOWED_GITHUB_USER_ID: allowedGithubUserId,
   GITHUB_CLIENT_ID: crypto.randomUUID(),
   GITHUB_CLIENT_SECRET: crypto.randomUUID(),
@@ -255,6 +258,46 @@ check(
   "Durable Object removes an expired row",
 );
 
+const noSiteReadAuthorization = await handleSiteNowPlayingRead(
+  new Request("http://localhost/api/v1/site-now-playing"),
+  env,
+);
+check(noSiteReadAuthorization.status === 401, "missing site-read authorization is 401");
+
+const uploadCredentialCannotRead = await handleSiteNowPlayingRead(
+  new Request("http://localhost/api/v1/site-now-playing", {
+    headers: { Authorization: `Bearer ${uploadToken}` },
+  }),
+  env,
+);
+check(uploadCredentialCannotRead.status === 401, "the Android upload credential cannot read snapshots");
+
+const wrongSiteReadMethod = await handleSiteNowPlayingRead(
+  new Request("http://localhost/api/v1/site-now-playing", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${siteReadToken}` },
+  }),
+  env,
+);
+check(wrongSiteReadMethod.status === 405, "site snapshot endpoint is read-only");
+
+const siteRead = await handleSiteNowPlayingRead(
+  new Request("http://localhost/api/v1/site-now-playing", {
+    headers: { Authorization: `Bearer ${siteReadToken}` },
+  }),
+  env,
+);
+const siteReadBody = nowPlayingSchema.safeParse(await siteRead.json());
+check(
+  siteRead.status === 200 &&
+    siteReadBody.success &&
+    siteReadBody.data.title === "Replacement title" &&
+    siteRead.headers.get("cache-control") === "no-store" &&
+    siteRead.headers.get("vary") === "Authorization" &&
+    !siteRead.headers.has("access-control-allow-origin"),
+  "authorized server-only read returns the current no-store snapshot without browser CORS",
+);
+
 const anonymousMcp = await worker.fetch(
   new Request("http://localhost/mcp", {
     method: "POST",
@@ -354,3 +397,4 @@ check(
 );
 
 console.log(`Passed ${passed} security and relay checks.`);
+
