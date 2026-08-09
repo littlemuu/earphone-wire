@@ -12,6 +12,7 @@ export default defineConfig({
       miniflare: {
         bindings: {
           ANDROID_UPLOAD_TOKEN: integrationUploadToken,
+          SITE_READ_TOKEN: randomUUID(),
           ALLOWED_GITHUB_USER_ID: "123456789",
           GITHUB_CLIENT_ID: "test-github-client-id",
           GITHUB_CLIENT_SECRET: "test-github-client-secret",
@@ -24,3 +25,4 @@ export default defineConfig({
     include: ["test/**/*.integration.test.ts"],
   },
 });
+
